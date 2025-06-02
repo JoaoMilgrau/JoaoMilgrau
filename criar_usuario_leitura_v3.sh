@@ -63,7 +63,7 @@ cd "$PG_DATA"
 sed -i "/$usuario/d" pg_hba.conf
 
 # Adiciona nova entrada
-if [[ "$PG_VERSION" == "14" || "$PG_VERSION" > "14" ]]; then
+if [[ "$PG_VERSION" == "14" || "$PG_VERSION" < "14" ]]; then
   echo "host    all     $usuario    samenet    scram-sha-256" >> pg_hba.conf
 else
   echo "host    all     $usuario    samenet    md5" >> pg_hba.conf
