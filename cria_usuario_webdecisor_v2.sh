@@ -111,46 +111,9 @@ fi
 echo "[INFO] Usuário ${usuario_fixo} criado/atualizado e permissões concedidas no banco de dados." | tee -a "$LOG_FILE"
 
 # --- Atualização do pg_hba.conf ---
-echo "[INFO] Atualizando pg_hba.conf..." | tee -a "$LOG_FILE"
-
-# Detecta diretório de dados e versão do PostgreSQL
-PG_DATA=$(ps aux | grep -oP 
-'^postgres .*postmaster.*-D *\K[\/\w\.-]+'
- \
-    || ps aux | grep -oP 
-'^postgres.*postgres .*--config-file=.*postgresql\.conf.*-D *\K[\/\w\.-]+'
- \
-    || echo "")
-
-if [[ -z "$PG_DATA" || ! -d "$PG_DATA" ]]; then
-    echo "[ERRO] Não foi possível detectar o diretório de dados do PostgreSQL (PGDATA). Verifique se o servidor PostgreSQL está em execução." | tee -a "$LOG_FILE"
-    unset PGPASSWORD
-    exit 1
-fi
-echo "[INFO] Diretório de dados detectado: $PG_DATA" | tee -a "$LOG_FILE"
-
-if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
-    echo "[ERRO] Arquivo PG_VERSION não encontrado em $PG_DATA." | tee -a "$LOG_FILE"
-    unset PGPASSWORD
-    exit 1
-fi
-PG_VERSION=$(cat "$PG_DATA/PG_VERSION")
-PG_HBA_CONF="$PG_DATA/pg_hba.conf"
-echo "[INFO] Versão do PostgreSQL detectada: $PG_VERSION" | tee -a "$LOG_FILE"
-echo "[INFO] Arquivo de configuração de autenticação: $PG_HBA_CONF" | tee -a "$LOG_FILE"
-
-if [[ ! -f "$PG_HBA_CONF" ]]; then
-    echo "[ERRO] Arquivo pg_hba.conf não encontrado em $PG_DATA." | tee -a "$LOG_FILE"
-    unset PGPASSWORD
-    exit 1
-fi
-
-# Verifica se precisa de sudo para editar pg_hba.conf
-SUDO_CMD=""
-if [[ ! -w "$PG_HBA_CONF" ]]; then
-    echo "[INFO] Necessário sudo para modificar $PG_HBA_CONF." | tee -a "$LOG_FILE"
-    SUDO_CMD="sudo"
-fi
+PG_DATA=$(ps aux | grep -oP '^postgres .*postmaster.*-D *\K.*')
+PG_VERSION=$(cat $PG_DATA/PG_VERSION)
+cd "$PG_DATA"
 
 # Remove entradas antigas do usuário
 echo "[INFO] Removendo entradas antigas para ${usuario_fixo} em $PG_HBA_CONF (usando $SUDO_CMD se necessário)" | tee -a "$LOG_FILE"
