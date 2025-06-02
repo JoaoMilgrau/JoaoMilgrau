@@ -40,7 +40,8 @@ fi
 echo "[INFO] Criando usuário ${usuario_fixo} no banco de dados ${CHINCHILA_DS_DATABASENAME} em ${END_SERVIDOR}..." | tee -a "$LOG_FILE"
 
 # Bloco PL/pgSQL para criação e permissões
-psql -X -h "$END_SERVIDOR" -U postgres -d "$CHINCHILA_DS_DATABASENAME" <<EOF >> "$LOG_FILE" 2>&1
+# Redireciona stdout e stderr do psql para o log
+psql_output=$(psql -X -h "$END_SERVIDOR" -U postgres -d "$CHINCHILA_DS_DATABASENAME" <<EOF 2>&1
 DO \$\$
 DECLARE
   usuario_alvo varchar := 
@@ -102,9 +103,13 @@ BEGIN
 END
 \$\$;
 EOF
+)
+psql_exit_code=$?
+echo "--- Saída do Bloco SQL --- " >> "$LOG_FILE"
+echo "$psql_output" >> "$LOG_FILE"
+echo "--- Fim da Saída do Bloco SQL (Código de Saída: $psql_exit_code) --- " >> "$LOG_FILE"
 
 # Verifica se o comando psql foi bem-sucedido
-psql_exit_code=$?
 if [ $psql_exit_code -ne 0 ]; then
     echo "[ERRO] Falha ao executar comandos SQL (código de saída: $psql_exit_code). Verifique o log: $LOG_FILE" | tee -a "$LOG_FILE"
     unset PGPASSWORD # Limpa a senha do admin
@@ -116,21 +121,47 @@ echo "[INFO] Usuário ${usuario_fixo} criado/atualizado e permissões concedidas
 # --- Atualização do pg_hba.conf ---
 echo "[INFO] Atualizando pg_hba.conf..." | tee -a "$LOG_FILE"
 
-# Detecta diretório de dados e versão do PostgreSQL
-PG_DATA=$(ps aux | grep -oP 
-'^postgres .*postmaster.*-D *\K[\/\w\.-]+'
- \
-    || ps aux | grep -oP 
-'^postgres.*postgres .*--config-file=.*postgresql\.conf.*-D *\K[\/\w\.-]+'
- \
-    || echo "")
+# Detecta diretório de dados e versão do PostgreSQL (Método mais compatível)
+echo "[INFO] Tentando detectar o diretório de dados do PostgreSQL (PGDATA)..." | tee -a "$LOG_FILE"
+PG_DATA=""
 
+# Tentativa 1: Usando postmaster
+PG_DATA_CMD1=$(ps aux | grep '[p]ostgres .*postmaster.*-D' | grep -oP -- '-D *\[K\]\K[\/\w\.-]+' | head -n 1)
+if [[ -n "$PG_DATA_CMD1" && -d "$PG_DATA_CMD1" ]]; then
+    PG_DATA="$PG_DATA_CMD1"
+    echo "[INFO] PGDATA encontrado via postmaster: $PG_DATA" | tee -a "$LOG_FILE"
+fi
+
+# Tentativa 2: Usando --config-file (se a primeira falhou)
+if [[ -z "$PG_DATA" ]]; then
+    PG_DATA_CMD2=$(ps aux | grep '[p]ostgres.*postgres .*--config-file=.*postgresql\.conf' | grep -oP -- '-D *\[K\]\K[\/\w\.-]+' | head -n 1)
+    if [[ -n "$PG_DATA_CMD2" && -d "$PG_DATA_CMD2" ]]; then
+        PG_DATA="$PG_DATA_CMD2"
+        echo "[INFO] PGDATA encontrado via --config-file: $PG_DATA" | tee -a "$LOG_FILE"
+    fi
+fi
+
+# Tentativa 3: Consultando o próprio PostgreSQL (se as anteriores falharam e psql está no PATH)
+if [[ -z "$PG_DATA" && command -v psql &> /dev/null ]]; then
+    echo "[INFO] Tentando consultar o PostgreSQL diretamente para obter PGDATA..." | tee -a "$LOG_FILE"
+    # Usa a senha do admin já exportada
+    PG_DATA_CMD3=$(psql -X -h "$END_SERVIDOR" -U postgres -d "$CHINCHILA_DS_DATABASENAME" -t -c "SHOW data_directory;" 2>/dev/null | xargs)
+     if [[ -n "$PG_DATA_CMD3" && -d "$PG_DATA_CMD3" ]]; then
+        PG_DATA="$PG_DATA_CMD3"
+        echo "[INFO] PGDATA encontrado via SHOW data_directory: $PG_DATA" | tee -a "$LOG_FILE"
+    else
+         echo "[WARN] Falha ao obter PGDATA via SHOW data_directory. Verifique a conexão e permissões." | tee -a "$LOG_FILE"
+     fi
+fi
+
+# Validação final do PG_DATA
 if [[ -z "$PG_DATA" || ! -d "$PG_DATA" ]]; then
-    echo "[ERRO] Não foi possível detectar o diretório de dados do PostgreSQL (PGDATA). Verifique se o servidor PostgreSQL está em execução." | tee -a "$LOG_FILE"
+    echo "[ERRO] Não foi possível detectar o diretório de dados do PostgreSQL (PGDATA) após várias tentativas. Verifique se o servidor PostgreSQL está em execução e acessível." | tee -a "$LOG_FILE"
     unset PGPASSWORD
     exit 1
 fi
-echo "[INFO] Diretório de dados detectado: $PG_DATA" | tee -a "$LOG_FILE"
+echo "[INFO] Diretório de dados confirmado: $PG_DATA" | tee -a "$LOG_FILE"
+
 
 if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
     echo "[ERRO] Arquivo PG_VERSION não encontrado em $PG_DATA." | tee -a "$LOG_FILE"
@@ -158,13 +189,17 @@ fi
 # Remove entradas antigas do usuário
 echo "[INFO] Removendo entradas antigas para ${usuario_fixo} em $PG_HBA_CONF (usando $SUDO_CMD se necessário)" | tee -a "$LOG_FILE"
 $SUDO_CMD sed -i.bak "/# Configurado por script ${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
-$SUDO_CMD sed -i "/${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
+$SUDO_CMD sed -i "/^[[:space:]]*host[[:space:]]\+all[[:space:]]\+${usuario_fixo}[[:space:]]/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1 # Regex mais específico
 
 # Adiciona nova entrada
 echo "[INFO] Adicionando nova entrada para ${usuario_fixo} em $PG_HBA_CONF (usando $SUDO_CMD se necessário)" | tee -a "$LOG_FILE"
 AUTH_METHOD="md5"
-if dpkg --compare-versions "$PG_VERSION" ge "14" &>/dev/null; then
-  AUTH_METHOD="scram-sha-256"
+# Usar verificação numérica para versão
+if [[ "$PG_VERSION" =~ ^([0-9]+) ]]; then
+    PG_MAJOR_VERSION=${BASH_REMATCH[1]}
+    if [[ $PG_MAJOR_VERSION -ge 14 ]]; then
+        AUTH_METHOD="scram-sha-256"
+    fi
 fi
 
 COMMENT_LINE="# Configurado por script ${usuario_fixo} em $(date)"
@@ -269,10 +304,10 @@ else
     echo "[INFO] Removendo entrada de ${usuario_fixo} do pg_hba.conf (se adicionada)..." | tee -a "$LOG_FILE"
     if [[ -n "$SUDO_CMD" ]]; then
         $SUDO_CMD sed -i.bak "/# Configurado por script ${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
-        $SUDO_CMD sed -i "/${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
+        $SUDO_CMD sed -i "/^[[:space:]]*host[[:space:]]\+all[[:space:]]\+${usuario_fixo}[[:space:]]/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
     else
         sed -i.bak "/# Configurado por script ${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
-        sed -i "/${usuario_fixo}/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
+        sed -i "/^[[:space:]]*host[[:space:]]\+all[[:space:]]\+${usuario_fixo}[[:space:]]/d" "$PG_HBA_CONF" >> "$LOG_FILE" 2>&1
     fi
     echo "[INFO] Recarregando PostgreSQL..." | tee -a "$LOG_FILE"
     if [[ -n "$RELOAD_CMD" ]]; then
