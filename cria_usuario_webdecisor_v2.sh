@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_FILE="cria_usuario_webdecisor.log"
 echo "########################################################" | tee -a "$LOG_FILE"
-echo " Criação do Usuário de Leitura Específico: chinchila_webdecisor " | tee -a "$LOG_FILE"
+echo " Criação do Usuário de Leitura Específico: chinchila_webdecisor (Não Interativo) " | tee -a "$LOG_FILE"
 echo "########################################################" | tee -a "$LOG_FILE"
 
 # Define o nome do usuário fixo
@@ -12,7 +12,6 @@ usuario="chinchila_webdecisor"
 echo "[INFO] Usuário a ser criado: $usuario" | tee -a "$LOG_FILE"
 
 # Gera uma senha aleatória segura (16 caracteres alfanuméricos)
-# Nota: Garanta que o sistema tenha /dev/urandom e tr
 senhagerada=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
 if [[ -z "$senhagerada" ]]; then
   echo "[ERRO] Falha ao gerar senha aleatória." | tee -a "$LOG_FILE"
@@ -20,23 +19,23 @@ if [[ -z "$senhagerada" ]]; then
 fi
 echo "[INFO] Senha aleatória gerada para o usuário $usuario." | tee -a "$LOG_FILE"
 
-# Solicita a senha do usuário administrador do PostgreSQL
-read -s -p "Digite a senha do usuário postgres: " PGPASSWORD
-echo
-export PGPASSWORD
+# Verifica se a senha do usuário postgres foi fornecida via variável de ambiente
+if [[ -z "${PGPASSWORD:-}" ]]; then
+    echo "[ERRO] A senha do usuário 'postgres' não foi fornecida." | tee -a "$LOG_FILE"
+    echo "Por favor, defina a variável de ambiente PGPASSWORD antes de executar o script:" | tee -a "$LOG_FILE"
+    echo "Exemplo: export PGPASSWORD='supertux'" | tee -a "$LOG_FILE"
+    exit 1
+fi
+echo "[INFO] Usando a senha do usuário 'postgres' fornecida via PGPASSWORD." | tee -a "$LOG_FILE"
 
 # Carrega variáveis do sistema (ajuste o caminho se necessário)
-# Certifique-se que este arquivo existe e contém as variáveis necessárias
 if [[ -f "/etc/wildfly.conf" ]]; then
     source /etc/wildfly.conf
 else
     echo "[AVISO] Arquivo /etc/wildfly.conf não encontrado. Tentando continuar sem ele." | tee -a "$LOG_FILE"
-    # Defina valores padrão ou saia se forem essenciais
-    # Exemplo: END_SERVIDOR=${END_SERVIDOR:-"localhost"}
-    # Exemplo: CHINCHILA_DS_DATABASENAME=${CHINCHILA_DS_DATABASENAME:-"chinchila_db"}
 fi
 
-# Validação das variáveis de ambiente
+# Validação das variáveis de ambiente do wildfly.conf
 if [[ -z "${END_SERVIDOR:-}" || -z "${CHINCHILA_DS_DATABASENAME:-}" ]]; then
   echo "Erro: END_SERVIDOR ou CHINCHILA_DS_DATABASENAME não definidos. Verifique /etc/wildfly.conf ou defina as variáveis de ambiente." | tee -a "$LOG_FILE"
   exit 1
@@ -45,17 +44,14 @@ fi
 echo "[INFO] Conectando ao banco de dados $CHINCHILA_DS_DATABASENAME em $END_SERVIDOR como usuário postgres..." | tee -a "$LOG_FILE"
 
 # Bloco PL/pgSQL para criação e permissões
+# A variável PGPASSWORD já está exportada (verificação acima)
 psql -X -h "$END_SERVIDOR" -U postgres -d "$CHINCHILA_DS_DATABASENAME" <<EOF
 DO \$\$
 DECLARE
-  usuario_fixo varchar := 
-'$usuario
-';
-  senha_nova varchar := 
-'$senhagerada
-';
+  usuario_fixo varchar := '$usuario';
+  senha_nova varchar := '$senhagerada';
 BEGIN
-  -- Remove role existente (se houver) - Garante que começamos do zero
+  -- Remove role existente (se houver)
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = usuario_fixo) THEN
      RAISE NOTICE '[INFO] Usuário % já existe. Removendo...', usuario_fixo;
      EXECUTE format('DROP ROLE %I', usuario_fixo);
@@ -97,6 +93,8 @@ EOF
 # Verifica se o comando psql foi bem-sucedido
 if [ $? -ne 0 ]; then
     echo "[ERRO] Falha ao executar comandos SQL para criar/configurar o usuário $usuario." | tee -a "$LOG_FILE"
+    # Limpa a senha da variável de ambiente em caso de erro também
+    unset PGPASSWORD
     exit 1
 fi
 
@@ -106,23 +104,20 @@ echo "[INFO] Usuário $usuario criado/atualizado e permissões concedidas no ban
 echo "[INFO] Atualizando pg_hba.conf..." | tee -a "$LOG_FILE"
 
 # Detecta diretório de dados e versão do PostgreSQL
-PG_DATA=$(ps aux | grep -oP 
-'^postgres .*postmaster.*-D *\K[\/\w\.-]+' \
-    || ps aux | grep -oP 
-'^postgres.*postgres .*--config-file=.*postgresql\.conf.*-D *\K[\/\w\.-]+' \
+PG_DATA=$(ps aux | grep -oP '^postgres .*postmaster.*-D *\K[\/\w\.-]+' \
+    || ps aux | grep -oP '^postgres.*postgres .*--config-file=.*postgresql\.conf.*-D *\K[\/\w\.-]+' \
     || echo "")
 
 if [[ -z "$PG_DATA" || ! -d "$PG_DATA" ]]; then
     echo "[ERRO] Não foi possível detectar o diretório de dados do PostgreSQL (PGDATA). Verifique se o servidor PostgreSQL está em execução e se o script tem permissão para detectá-lo." | tee -a "$LOG_FILE"
-    # Tentar um local padrão?
-    # PG_DATA="/var/lib/postgresql/14/main" # Exemplo
-    # if [[ ! -d "$PG_DATA" ]]; then exit 1; fi
+    unset PGPASSWORD
     exit 1
 fi
 echo "[INFO] Diretório de dados detectado: $PG_DATA" | tee -a "$LOG_FILE"
 
 if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
     echo "[ERRO] Arquivo PG_VERSION não encontrado em $PG_DATA." | tee -a "$LOG_FILE"
+    unset PGPASSWORD
     exit 1
 fi
 PG_VERSION=$(cat "$PG_DATA/PG_VERSION")
@@ -132,6 +127,7 @@ echo "[INFO] Arquivo de configuração de autenticação: $PG_HBA_CONF" | tee -a
 
 if [[ ! -f "$PG_HBA_CONF" ]]; then
     echo "[ERRO] Arquivo pg_hba.conf não encontrado em $PG_DATA." | tee -a "$LOG_FILE"
+    unset PGPASSWORD
     exit 1
 fi
 
@@ -171,7 +167,6 @@ if command -v systemctl &> /dev/null && systemctl is-active postgresql &> /dev/n
     RELOAD_CMD="sudo systemctl reload postgresql"
 elif command -v service &> /dev/null;
     then
-    # Tenta com versão específica primeiro
     if service "postgresql-$PG_VERSION" status &> /dev/null; then
         RELOAD_CMD="sudo service postgresql-$PG_VERSION reload"
     elif service postgresql status &> /dev/null; then
@@ -183,22 +178,22 @@ if [[ -n "$RELOAD_CMD" ]]; then
     echo "[INFO] Executando: $RELOAD_CMD" | tee -a "$LOG_FILE"
     if !$RELOAD_CMD; then
         echo "[ERRO] Falha ao recarregar a configuração do PostgreSQL. Verifique os logs do sistema." | tee -a "$LOG_FILE"
-        # Considerar se deve sair ou continuar com aviso
     else
         echo "[INFO] Configuração do PostgreSQL recarregada." | tee -a "$LOG_FILE"
     fi
 else
-    echo "[AVISO] Não foi possível determinar o comando para recarregar o PostgreSQL. Faça isso manualmente." | tee -a "$LOG_FILE"
+    echo "[AVISO] Não foi possível determinar o comando para recarregar o PostgreSQL. Faça isso manually." | tee -a "$LOG_FILE"
 fi
 
 # --- Teste de Conexão e Validação --- 
 echo "[INFO] Testando acesso com o usuário $usuario..." | tee -a "$LOG_FILE"
 TEST_PASSED=true
-export PGPASSWORD="$senhagerada" # Define a senha para os testes
+# Define a senha do NOVO usuário para os testes
+export PGPASSWORD_TEST="$senhagerada"
 
 # Teste 1: SELECT na view v_extracaocliente
 echo "[TESTE] Executando: SELECT * FROM integracao_webdecisor.v_extracaocliente LIMIT 1;" | tee -a "$LOG_FILE"
-if ! psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_DS_DATABASENAME" -c "SELECT * FROM integracao_webdecisor.v_extracaocliente LIMIT 1;" > /dev/null 2> erro_teste1.log; then
+if ! PGPASSWORD="$PGPASSWORD_TEST" psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_DS_DATABASENAME" -c "SELECT * FROM integracao_webdecisor.v_extracaocliente LIMIT 1;" > /dev/null 2> erro_teste1.log; then
   echo "❌ Falha no teste 1 (v_extracaocliente)! Verifique permissões e a view." | tee -a "$LOG_FILE"
   cat erro_teste1.log | tee -a "$LOG_FILE"
   TEST_PASSED=false
@@ -209,7 +204,7 @@ rm -f erro_teste1.log
 
 # Teste 2: SELECT na tabela unidademedida
 echo "[TESTE] Executando: SELECT * FROM unidademedida LIMIT 1;" | tee -a "$LOG_FILE"
-if ! psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_DS_DATABASENAME" -c "SELECT * FROM unidademedida LIMIT 1;" > /dev/null 2> erro_teste2.log; then
+if ! PGPASSWORD="$PGPASSWORD_TEST" psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_DS_DATABASENAME" -c "SELECT * FROM unidademedida LIMIT 1;" > /dev/null 2> erro_teste2.log; then
   echo "❌ Falha no teste 2 (unidademedida)! Verifique permissões e a tabela." | tee -a "$LOG_FILE"
   cat erro_teste2.log | tee -a "$LOG_FILE"
   TEST_PASSED=false
@@ -218,8 +213,9 @@ else
 fi
 rm -f erro_teste2.log
 
-# Limpa a senha da variável de ambiente
+# Limpa as senhas das variáveis de ambiente
 unset PGPASSWORD
+unset PGPASSWORD_TEST
 
 # Resultado Final
 if $TEST_PASSED; then
@@ -237,7 +233,7 @@ if $TEST_PASSED; then
   echo "Arquivo pg_hba.conf atualizado e PostgreSQL recarregado." | tee -a "$LOG_FILE"
   echo "Testes de SELECT em 'integracao_webdecisor.v_extracaocliente' e 'unidademedida' concluídos com sucesso." | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
-  echo "Guarde a senha gerada em local seguro!" | tee -a "$LOG_FILE"
+  echo "Guarde a senha gerada ($senhagerada) em local seguro!" | tee -a "$LOG_FILE"
 else
   echo "" | tee -a "$LOG_FILE"
   echo "#############################################################" | tee -a "$LOG_FILE"
@@ -245,40 +241,16 @@ else
   echo "#############################################################" | tee -a "$LOG_FILE"
   echo "Verifique o log: $LOG_FILE" | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
-  # A reversão automática pode ser complexa e arriscada, especialmente se falhas ocorreram no meio.
-  # Mantendo a opção manual como no script anterior, mas alertando sobre a senha gerada.
   echo "[AVISO] Uma senha foi gerada ($senhagerada) mas o processo falhou." | tee -a "$LOG_FILE"
-  read -p "Deseja tentar reverter a criação do usuário $usuario (se ele chegou a ser criado)? [s/N]: " resposta
-
-  if [[ "$resposta" =~ ^[sS]$ ]]; then
-    echo "[INFO] Tentando reverter criação do usuário $usuario..." | tee -a "$LOG_FILE"
-    export PGPASSWORD # Re-exporta a senha do admin
-    # Bloco para reverter
-    psql -X -h "$END_SERVIDOR" -U postgres -d "$CHINCHILA_DS_DATABASENAME" -c "DROP ROLE IF EXISTS \"$usuario\";"
-    echo "[INFO] Removendo entrada de $usuario do pg_hba.conf (se adicionada)..." | tee -a "$LOG_FILE"
-    if [[ -n "$SUDO_CMD" ]]; then # Usa sudo se necessário
-        $SUDO_CMD sed -i.bak "/# Configurado por script $usuario/d" "$PG_HBA_CONF"
-        $SUDO_CMD sed -i "/$usuario/d" "$PG_HBA_CONF"
-    else
-        sed -i.bak "/# Configurado por script $usuario/d" "$PG_HBA_CONF"
-        sed -i "/$usuario/d" "$PG_HBA_CONF"
-    fi
-    echo "[INFO] Recarregando PostgreSQL..." | tee -a "$LOG_FILE"
-    if [[ -n "$RELOAD_CMD" ]]; then
-        $RELOAD_CMD
-    else
-        echo "[AVISO] Recarregue o PostgreSQL manualmente." | tee -a "$LOG_FILE"
-    fi
-    unset PGPASSWORD
-    echo "Rollback tentado. Verifique o status." | tee -a "$LOG_FILE"
-  else
-    unset PGPASSWORD
-    echo "" | tee -a "$LOG_FILE"
-    echo "⚠️ ATENÇÃO: Processo finalizado com falhas. Nenhuma reversão automática foi realizada." | tee -a "$LOG_FILE"
-    echo "Verifique o log $LOG_FILE para detalhes dos erros." | tee -a "$LOG_FILE"
-  fi
+  # A reversão não será interativa nesta versão
+  echo "[INFO] Tentando reverter criação do usuário $usuario (se ele chegou a ser criado)..." | tee -a "$LOG_FILE"
+  # Re-exporta a senha do admin se ainda estiver disponível (pode ter sido unset)
+  # É mais seguro pedir para definir novamente ou confiar que ainda está no ambiente
+  # Para simplificar, vamos assumir que PGPASSWORD precisa ser definida novamente para rollback
+  echo "[INFO] Para reverter, certifique-se que PGPASSWORD (senha do postgres) está definida e execute manualmente:" | tee -a "$LOG_FILE"
+  echo "  psql -X -h \"$END_SERVIDOR\" -U postgres -d \"$CHINCHILA_DS_DATABASENAME\" -c \"DROP ROLE IF EXISTS \\\"$usuario\\\";\"" | tee -a "$LOG_FILE"
+  echo "  # E remova a linha de $usuario do $PG_HBA_CONF e recarregue o postgresql" | tee -a "$LOG_FILE"
   exit 1
 fi
 
 exit 0
-
