@@ -4,7 +4,7 @@
 
 # --- Configurações (Ajuste conforme necessário) ---
 WILDFLY_BIN_DIR="/usr/wildfly/bin"
-PGSQL_LOG_DIR="/var/lib/pgsql/9.6/data/pg_log"
+PGSQL_LOG_DIR="/var/lib/pgsql/14/data/pg_log"
 PGSQL_LOG_PATTERN="postgresql-*"
 
 # --- Identificação de Discos ---
