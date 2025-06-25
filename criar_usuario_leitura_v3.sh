@@ -7,6 +7,9 @@ echo "########################################################" | tee -a "$LOG_F
 echo "      Criação de Usuário de Leitura no PostgreSQL       " | tee -a "$LOG_FILE"
 echo "########################################################" | tee -a "$LOG_FILE"
 
+read -p "Digite o termo de liberação: " termo_liberacao
+echo "[INFO] Termo de liberação informado: $termo_liberacao" | tee -a "$LOG_FILE"
+
 read -s -p "Senha do usuário postgres: " PGPASSWORD
 echo
 export PGPASSWORD
