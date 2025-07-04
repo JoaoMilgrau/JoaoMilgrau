@@ -1,0 +1,51 @@
+import psycopg2
+import os
+
+output_dir = os.path.expanduser("~/xmls")
+os.makedirs(output_dir, exist_ok=True)
+
+conn = psycopg2.connect(
+    host="2559-07799",  #informe o codigo do cliente
+    dbname="drogamaxpopular_esc_20241107",  # informe a base de dados do cliente
+    user="chinchila",  # informe o usuario
+    password="chinchila" # informe a senha
+)
+cur = conn.cursor()
+
+# Buscar o nome e o OID do arquivo (XML)
+# Abaixo segue exemplo de script para se utilizar na hora de montar um select para baixar arquivos XML.
+cur.execute("""
+SELECT arquivo.nome, arquivo.arquivo
+FROM venda
+JOIN nfe ON nfe.vendaid = venda.id
+LEFT JOIN orcamento ON orcamento.id = venda.orcamentoId
+JOIN orcamentoPbm ON orcamentoPbm.orcamentoId = orcamento.id 
+LEFT JOIN pbm ON pbm.id = orcamentoPbm.pbmid
+LEFT JOIN arquivo ON nfe.arquivoXMLId = arquivo.id
+WHERE orcamentoPbm.pbmid = 349 
+  AND venda.status = 'F'
+  AND venda.unidadenegocioid = 73108
+  AND venda.coo IN (
+    '018735','031244','033806','026181','025922','025517','030429','017348','030265','032008',
+    '030163','031796','016952','029969','024728','031398','031379','031377','024600','031023',
+  );
+""")
+
+for nome, oid in cur.fetchall():
+    if oid is None:
+        print(f"[!] Ignorado: {nome} — XML não encontrado")
+        continue
+    try:
+        lobj = conn.lobject(oid, 'rb')  # rb = read binary
+        xml_data = lobj.read()
+        lobj.close()
+        
+        nome_arquivo = nome if nome.endswith(".xml") else nome + ".xml"
+        with open(os.path.join(output_dir, nome_arquivo), "wb") as f:
+            f.write(xml_data)
+        print(f"[✓] XML salvo: {nome_arquivo}")
+    except Exception as e:
+        print(f"[✗] Erro ao salvar {nome}: {e}")
+
+cur.close()
+conn.close()
