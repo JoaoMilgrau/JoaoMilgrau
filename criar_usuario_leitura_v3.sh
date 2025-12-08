@@ -8,7 +8,7 @@ echo "      Criação de Usuário de Leitura no PostgreSQL       " | tee -a "$LO
 echo "########################################################" | tee -a "$LOG_FILE"
 
 read -p "Digite o termo de liberação: " termo_liberacao
-echo "[INFO] Termo de liberação informado: $termo_liberacao" | tee -a "$LOG_FILE"
+
 
 read -s -p "Senha do usuário postgres: " PGPASSWORD
 echo
@@ -20,6 +20,8 @@ echo
 
 # Carrega variáveis do sistema
 source /etc/wildfly.conf
+
+
 
 # Validação
 if [[ -z "${END_SERVIDOR:-}" || -z "${CHINCHILA_DS_DATABASENAME:-}" ]]; then
@@ -87,6 +89,11 @@ if PGPASSWORD="$senha" psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_D
   echo "Base: $CHINCHILA_DS_DATABASENAME" | tee -a "$LOG_FILE"
   echo "Versão PostgreSQL: $PG_VERSION" | tee -a "$LOG_FILE"
   echo "Porta: 5432" | tee -a "$LOG_FILE"
+  echo "[INFO] Termo de liberação informado: $termo_liberacao" | tee -a "$LOG_FILE"
+  echo "- Deve chegar pelo link de internet e ser roteada para o IP Local."
+  echo "- Para acessos externos, utilize o IP Público."
+  echo "- Não nos responsabilizamos por NAT com portas alteradas."
+  echo "============================================="
   echo "" | tee -a "$LOG_FILE"
   read -p "Pressione ENTER para encerrar..."
 
