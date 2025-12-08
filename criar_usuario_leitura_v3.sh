@@ -15,13 +15,18 @@ echo
 export PGPASSWORD
 
 read -p "Digite o nome do usuário a ser criado: " usuario
-read -s -p "Digite a senha para o usuário $usuario: " senha
-echo
+
+senha=$(openssl rand -base64 12 | tr -d /=+ | cut -c1-12)
+
+echo "Senha gerada automaticamente para o usuário $usuario: $senha"
+
 
 # Carrega variáveis do sistema
 source /etc/wildfly.conf
 
 
+# === CAPTURAR IP PÚBLICO (via serviço externo) ===
+IP_PUBLICO=$(curl -s https://api.ipify.org)
 
 # Validação
 if [[ -z "${END_SERVIDOR:-}" || -z "${CHINCHILA_DS_DATABASENAME:-}" ]]; then
@@ -85,14 +90,21 @@ if PGPASSWORD="$senha" psql -X -h "$END_SERVIDOR" -U "$usuario" -d "$CHINCHILA_D
   echo "✅ Usuário criado e acesso validado com sucesso!" | tee -a "$LOG_FILE"
   echo "Usuário: $usuario" | tee -a "$LOG_FILE"
   echo "Senha: $senha" | tee -a "$LOG_FILE"
-  echo "Servidor: $END_SERVIDOR" | tee -a "$LOG_FILE"
+  echo "IP Servidor Local: $END_SERVIDOR" | tee -a "$LOG_FILE  -  (Caso a conexão à base seja feita no mesmo ambiente de rede)"
+  echo "IP Servidor Público: $IP_PUBLICO" | tee -a "$LOG_FILE - (Caso a conexão à base seja feita de outro ambiente de rede)  "
   echo "Base: $CHINCHILA_DS_DATABASENAME" | tee -a "$LOG_FILE"
   echo "Versão PostgreSQL: $PG_VERSION" | tee -a "$LOG_FILE"
   echo "Porta: 5432" | tee -a "$LOG_FILE"
-  echo "[INFO] Termo de liberação informado: $termo_liberacao" | tee -a "$LOG_FILE"
-  echo "- Deve chegar pelo link de internet e ser roteada para o IP Local."
-  echo "- Para acessos externos, utilize o IP Público."
-  echo "- Não nos responsabilizamos por NAT com portas alteradas."
+  echo " Termo de liberação informado: $termo_liberacao" | tee -a "$LOG_FILE"
+  echo "- Observações Porta 5432:
+
+Deve 'chegar' pelo Link de internet e ser roteada/encaminhada para o IP Servidor local. Esse roteamento deve ser feito pele TI Local ou responsável pelo ambiente de rede
+
+Para acessos externos ao ambiente de rede local, o IP Servidor Público (ou DDNs) deve ser configurado na conexão remota.
+Essa configuração é feita pelo usuário que irá fazer o acesso.
+Não nos responsabilizamos por roteamentos NAT, onde a porta de origem da conexão seja diferente da porta 5432. Ex: 5444 (externo) > 5432 (Interno).
+
+."
   echo "============================================="
   echo "" | tee -a "$LOG_FILE"
   read -p "Pressione ENTER para encerrar..."
