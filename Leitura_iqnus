@@ -14,7 +14,6 @@ read -s -p "Senha do usuário postgres: " PGPASSWORD
 echo
 export PGPASSWORD
 
-usuario = "leitura_iqnus"
 
 senha=$(openssl rand -base64 12 | tr -d /=+ | cut -c1-12)
 
@@ -23,6 +22,8 @@ echo "Senha gerada automaticamente para o usuário $usuario: $senha"
 
 # Carrega variáveis do sistema
 source /etc/wildfly.conf
+
+usuario = "leitura_iqnus"
 
 
 # === CAPTURAR IP PÚBLICO (via serviço externo) ===
