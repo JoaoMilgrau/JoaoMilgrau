@@ -14,16 +14,16 @@ read -s -p "Senha do usuário postgres: " PGPASSWORD
 echo
 export PGPASSWORD
 
-
+usuario="leitura_iqnus"
 senha=$(openssl rand -base64 12 | tr -d /=+ | cut -c1-12)
 
 echo "Senha gerada automaticamente para o usuário $usuario: $senha"
 
 
+
 # Carrega variáveis do sistema
 source /etc/wildfly.conf
 
-usuario = "leitura_iqnus"
 
 
 # === CAPTURAR IP PÚBLICO (via serviço externo) ===
@@ -57,11 +57,10 @@ BEGIN
   END IF;
 
   EXECUTE format('DROP ROLE IF EXISTS %I', usuario);
-  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD ''%s'' NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE CONNECTION LIMIT 5', usuario, senha);
+  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD ''%s'' NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE CONNECTION LIMIT 20', usuario, senha);
   EXECUTE format('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM %I', usuario);
   EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA public TO %I', usuario);
   EXECUTE format('ALTER DEFAULT PRIVILEGES FOR USER chinchila IN SCHEMA public GRANT SELECT ON TABLES TO %I', usuario);
-  EXECUTE format ('ALTER ROLE %I CONNECTION LIMIT 20', usuario);
 END
 \$\$;
 EOF
@@ -82,7 +81,7 @@ else
 fi
 # Adiciona nova entrada
 if [[ "$PG_VERSION" == "14" || "$PG_VERSION" < "14" ]]; then
-  echo # LEITURA IQNUS >> pg_hba.conf
+  echo "# LEITURA IQNUS" >> pg_hba.conf
   echo "host    all     $usuario    138.121.120.254/32    scram-sha-256" >> pg_hba.conf
 else
   echo "host    all     $usuario    138.121.120.254/32    md5" >> pg_hba.conf
