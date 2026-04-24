@@ -75,13 +75,14 @@ cd "$PG_DATA"
 
 # Adiciona nova entrada
 if [[ "$PG_VERSION" == "14" || "$PG_VERSION" < "14" ]]; then
+  echo "# LEITURA IQNUS" >> pg_hba.conf
   echo "host    all     $usuario    samenet    scram-sha-256" >> pg_hba.conf
 else
   echo "host    all     $usuario    samenet    md5" >> pg_hba.conf
 fi
 # Adiciona nova entrada
 if [[ "$PG_VERSION" == "14" || "$PG_VERSION" < "14" ]]; then
-  echo "# LEITURA IQNUS" >> pg_hba.conf
+
   echo "host    all     $usuario    138.121.120.254/32    scram-sha-256" >> pg_hba.conf
 else
   echo "host    all     $usuario    138.121.120.254/32    md5" >> pg_hba.conf
